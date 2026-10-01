@@ -50,11 +50,22 @@ async def verify_api_key(x_api_key: str = Header(..., description="Sistemden ür
         raise HTTPException(status_code=401, detail="Geçersiz veya pasif API anahtarı.")
     return result.data
 
-# 6. GÖRSEL ARAYÜZ (Ana Sayfa) UÇ NOKTASI
+# 6. GÖRSEL ARAYÜZ (Ana Sayfa) - Klasör arama zorunluluğunu kaldıran kararlı sürüm
 @app.get("/", response_class=HTMLResponse, tags=["Görsel Arayüz"])
 async def index_page(request: Request):
-    # Kullanıcı ana siteye girdiğinde templates/dashboard.html sayfasını tarayıcıya basar
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    try:
+        # Kodun yanındaki dashboard.html dosyasını doğrudan düz metin olarak okur
+        with open("dashboard.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        # Eğer dosya templates klasörünün içindeyse oradan okumayı dener (Yedek Plan)
+        try:
+            with open("templates/dashboard.html", "r", encoding="utf-8") as f:
+                html_content = f.read()
+            return HTMLResponse(content=html_content)
+        except Exception:
+            raise HTTPException(status_code=404, detail="dashboard.html dosyası sunucuda hiçbir yerde bulunamadı!")
 
 # 7. Auth Uç Noktaları
 @app.post("/auth/register", tags=["Kullanıcı Yönetimi"])
