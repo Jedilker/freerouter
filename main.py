@@ -23,5 +23,10 @@ COPY . .
 # Uygulamanın çalışacağı portu dışarı açıyoruz
 EXPOSE 8000
 
-# FastAPI uygulamasını uvicorn ile başlatıyoruz
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Sizin koddaki 3. Adım tam olarak bu şekilde güncellenecek:
+
+SUPABASE_URL = "https://rpbzheojxnusbyhwtvhg.supabase.co"  # <--- Buraya Supabase'den aldığınız URL'yi yapıştırın
+SUPABASE_KEY = "sb_publishable_Kxv0PensRngFCXXWNzku8w_Z-TDWhnn"     # <--- Buraya da anon public anahtarınızı yapıştırın
+
+# Bu satır, yukarıdaki bilgilerle veritabanınıza otomatik olarak bağlanır
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
