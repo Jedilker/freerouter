@@ -59,18 +59,13 @@ async def register(user: UserAuth):
 @app.post("/auth/login-and-generate-key", tags=["Kullanıcı Yönetimi"])
 async def login_and_generate_key(user: UserAuth):
     try:
-        # Kullanıcı girişi doğrulanır
         res = supabase.auth.sign_in_with_password({"email": user.email, "password": user.password})
-        
-        # Kullanıcıya özel rastgele güvenli bir API Key üretilir (Örn: sk_live_4f7a...)
         new_key = f"sk_live_{secrets.token_hex(24)}"
-        
-        # Üretilen anahtar veritabanına kaydedilir
         supabase.table("user_api_keys").insert({"user_id": res.user.id, "api_key": new_key}).execute()
-        
-        return {"status": "Giriş Başarılı", "your_api_key": new_key, "info": "Bu anahtarı /route isteklerinizde Header olarak kullanın."}
+        return {"status": "Giriş Başarılı", "your_api_key": new_key}
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Giriş başarısız. Bilgilerinizi kontrol edin.")
+        # DEĞİŞİKLİK BURADA: Artık yuvarlanmış mesaj yerine gerçek hatayı ekrana basıyoruz
+        raise HTTPException(status_code=400, detail=f"Supabase Hatası: {str(e)}")
 
 # 6. KORUNAN ROUTE SERVİSİ
 @app.post("/route", tags=["Yönlendirici Motoru"])
