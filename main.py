@@ -3,21 +3,25 @@ import time
 import secrets
 import numpy as np
 import requests
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr
 from sklearn.linear_model import LogisticRegression
 from supabase import create_client, Client
 
+# 1. FastAPI ve Şablon Motoru Kurulumu
 app = FastAPI(title="Auth Entegreli Güvenli LLM Router API")
+templates = Jinja2Templates(directory="templates")
 
-# 1. Bağlantı Ayarları
+# 2. Bağlantı Ayarları
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://YOUR_SUPABASE.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HF_API_URL = "https://huggingface.co"
 
-# 2. Model ve Eğitim Ayarları
+# 3. Model ve Eğitim Ayarları
 def get_embedding(text: str):
     response = requests.post(HF_API_URL, json={"inputs": text})
     return response.json() if response.status_code == 200 else [0.0] * 384
@@ -31,7 +35,7 @@ train_labels = [0, 0, 0, 1, 1, 1]
 X_train = [get_embedding(p) for p in train_prompts]
 router_classifier = LogisticRegression().fit(X_train, np.array(train_labels))
 
-# 3. Pydantic Veri Modelleri
+# 4. Pydantic Veri Modelleri
 class UserAuth(BaseModel):
     email: EmailStr
     password: str
@@ -39,14 +43,20 @@ class UserAuth(BaseModel):
 class RouterRequest(BaseModel):
     prompt: str
 
-# 4. API Anahtarı Kontrol Mekanizması
+# 5. API Anahtarı Kontrol Mekanizması
 async def verify_api_key(x_api_key: str = Header(..., description="Sistemden ürettiğiniz API anahtarı")):
     result = supabase.table("user_api_keys").select("*").eq("api_key", x_api_key).eq("is_active", True).execute()
     if not result.data:
         raise HTTPException(status_code=401, detail="Geçersiz veya pasif API anahtarı.")
     return result.data
 
-# 5. Auth Uç Noktaları
+# 6. GÖRSEL ARAYÜZ (Ana Sayfa) UÇ NOKTASI
+@app.get("/", response_class=HTMLResponse, tags=["Görsel Arayüz"])
+async def index_page(request: Request):
+    # Kullanıcı ana siteye girdiğinde templates/dashboard.html sayfasını tarayıcıya basar
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+# 7. Auth Uç Noktaları
 @app.post("/auth/register", tags=["Kullanıcı Yönetimi"])
 async def register(user: UserAuth):
     try:
@@ -65,18 +75,16 @@ async def login_and_generate_key(user: UserAuth):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Supabase Hatası: {str(e)}")
 
-# 6. Korunan Router Servisi (0-Dimensional Matris Hatası Tamamen Giderildi)
+# 8. Korunan Router Servisi
 @app.post("/route", tags=["Yönlendirici Motoru"])
 async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_api_key)):
     start_time = time.time()
     try:
         prompt_vector = get_embedding(request.prompt)
-        
-        # Vektör tek satırlık matris formatına zorlanıyor
         X_test = np.array(prompt_vector).reshape(1, -1)
         
-        prediction = router_classifier.predict(X_test)[0]
-        probabilities = router_classifier.predict_proba(X_test)[0]
+        prediction = router_classifier.predict(X_test)
+        probabilities = router_classifier.predict_proba(X_test)
         confidence = float(probabilities[prediction] * 100)
         
         target = "Llama-3-8B" if prediction == 0 else "Claude-3.5-Sonnet"
@@ -89,48 +97,35 @@ async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_
             "latency_ms": latency
         }).execute()
         
-        return {
-            "target_model": target, 
-            "confidence": round(confidence, 2), 
-            "latency_ms": latency
-        }
+        return {"target_model": target, "confidence": round(confidence, 2), "latency_ms": latency}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Router İç Hatası: {str(e)}")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-# Bu kodu main.py dosyanızın en altına, "if __name__ == '__main__':" satırının HEMEN ÜSTÜNE yapıştırın.
-
+# 9. Analitik ve Raporlama Servisi
 @app.get("/analytics", tags=["Müşteri Paneli & Analitik"])
 async def get_user_analytics(current_user: dict = Depends(verify_api_key)):
     try:
-        # 1. Veritabanından bu kullanıcının (veya test ortamında tüm) loglarını çekiyoruz
-        # Gerçek üründe müşteriler sadece kendi isteklerini görecek
         logs_result = supabase.table("router_logs").select("*").execute()
         logs = logs_result.data
         
         if not logs:
             return {
-                "total_requests": 0,
-                "cheap_model_count": 0,
-                "expensive_model_count": 0,
-                "total_saved_usd": 0.0,
-                "average_latency_ms": 0.0
+                "summary": {
+                    "total_requests": 0, "average_latency_ms": 0.0,
+                    "financials": {"total_saved_usd": 0.0, "saved_currency_text": "$0.00 USD Tasarruf Edildi"}
+                },
+                "chart_data": {"labels": ["Llama-3-8B (Ucuz)", "Claude-3.5 (Pahalı)"], "datasets": [0, 0]},
+                "status": "success"
             }
             
         total_requests = len(logs)
         cheap_model_count = sum(1 for log in logs if log["target_model"] == "Llama-3-8B")
         expensive_model_count = sum(1 for log in logs if log["target_model"] == "Claude-3.5-Sonnet")
         
-        # 2. Toplam Tasarrufu Hesaplama (Her ucuz model yönlendirmesi = $0.00245 tasarruf)
         total_saved_usd = round(cheap_model_count * 0.00245, 5)
-        
-        # 3. Ortalama Gecikme Süresi Hesaplama
         total_latency = sum(log["latency_ms"] for log in logs)
         average_latency_ms = round(total_latency / total_requests, 2)
         
-        # 4. Dashboard Grafiklerine Gönderilecek Yapılandırılmış Veri
         return {
             "summary": {
                 "total_requests": total_requests,
@@ -146,21 +141,9 @@ async def get_user_analytics(current_user: dict = Depends(verify_api_key)):
             },
             "status": "success"
         }
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analitik Raporu Alınamadı: {str(e)}")
 
-# 1. En üstteki import alanına bunları ekleyin:
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi import Request
-
-# 2. app = FastAPI() satırının hemen altına şablon klasörünü tanımlayın:
-templates = Jinja2Templates(directory="templates")
-
-# 3. Koddaki Uç Noktaların (Endpoints) arasına ana sayfa rotasını ekleyin:
-@app.get("/", response_class=HTMLResponse, tags=["Görsel Arayüz"])
-async def index_page(request: Request):
-    # Kullanıcı ana siteye girdiğinde templates/dashboard.html sayfasını açar
-    return templates.TemplateResponse("dashboard.html", {"request": request})
-
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
