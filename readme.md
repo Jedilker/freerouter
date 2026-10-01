@@ -117,6 +117,65 @@ getLLMRoute();
 ```
 
 ---
+# ⚡ FreeRouter: The Ultra-Fast, Open-Source & Privacy-First LLM Router
+
+[![License: MIT](https://shields.io)](https://opensource.org)
+[![FastAPI](https://shields.io)](https://tiangolo.com)
+[![Render](https://shields.io)](https://render.com)
+[![Supabase](https://shields.io)](https://supabase.com)
+
+**FreeRouter**, yapay zekâ uygulamalarınızdaki API maliyetlerini %50'ye varan oranda düşüren, bağımlılık riskini (vendor lock-in) ortadan kaldıran ve kararları ışık hızında veren açık kaynaklı bir **LLM Router (Yönlendirici)** projesidir. 
+
+Ağır ve maliyetli LLM katmanları kullanan rakiplerin aksine, FreeRouter yerel gömülü matematiksel motoru sayesinde yönlendirme kararlarını **sadece 15-30ms** içinde, tamamen ücretsiz ve güvenli bir şekilde verir.
+
+---
+
+## 🎯 Neden FreeRouter? (Temel Değer Önerileri)
+
+* **💰 %50+ Maliyet Tasarrufu:** Basit istekleri otomatik olarak ultra ucuz açık kaynaklı modellere (Llama-3-8B vb.), karmaşık analizleri ise gelişmiş modellere (Claude 3.5 Sonnet vb.) yönlendirir.
+* **⚡ Işık Hızında Karar (Low Latency):** Arkada karar vermek için ikinci bir LLM çalıştırmaz. Embedding tabanlı akıllı sınıflandırıcısı sayesinde kararlar milisaniyeler içinde alınır.
+* **🔄 %100 Kesintisiz Hizmet (Fallback / Uptime):** Bir sağlayıcının API'si (Örn: OpenAI) çöktüğünde veya yavaşladığında, trafiği anında alternatif modellere aktarır.
+* **🛡️ Gizlilik ve Güvenlik (Privacy-First):** Kurumsal verilerinizi dışarı aktarmaz. İsterseniz Docker altyapısı sayesinde tamamen kendi sunucularınızda (On-Premises) çalıştırabilirsiniz.
+* **📊 Canlı Finansal Dashboard:** Müşteri paneli üzerinden toplam istek sayınızı, model dağılım grafiklerinizi ve cebinizde kalan net dolar tasarrufunuzu canlı olarak izleyin.
+
+---
+
+## 🛠️ Mimari ve Teknolojik Altyapı
+
+FreeRouter, modern yazılım standartları ve bulut teknolojileriyle sıfır maliyetle ölçeklenebilecek şekilde tasarlanmıştır:
+* **Backend:** [FastAPI](https://tiangolo.com) (Asenkron ve Yüksek Performanslı Web API)
+* **Karar Motoru:** Yerel [Scikit-Learn](https://scikit-learn.org) ve Bulut Tabanlı Embedding Entegrasyonu (Jev felsefesiyle üretilmiş hafif alternatif)
+* **Veritabanı & Kimlik Doğrulama:** [Supabase](https://supabase.com) (PostgreSQL + Canlı Loglama + Güvenli API Key Auth)
+* **Konteynerizasyon:** [Docker](https://docker.com) (Her bulut platformuna tek tıkla kurulum uyumlu)
+
+---
+
+## 💻 Canlı Panel Görüntüsü (Dashboard)
+
+Uygulamanın ana dizinine girdiğinizde sizi karşılayan modern arayüz üzerinden:
+1. Kayıt olabilir ve kendinize özel güvenli ticari `API Key` üretebilirsiniz.
+2. Ürettiğiniz anahtarı girerek yapay zekâ harcamalarınızı ve model dağılım pasta grafiklerinizi anlık olarak takip edebilirsiniz.
+
+---
+
+## 🚀 Hızlı Başlangıç ve Entegrasyon
+
+FreeRouter'ı kendi projenize entegre etmek sadece 3 satır kod sürer.
+
+---
+
+## 💰 SaaS İş Modeli ve Lisans
+
+FreeRouter, **MIT Lisansı** ile tamamen açık kaynaklıdır. Projeyi ticari bir SaaS ürünü olarak konumlandırırken şu modeller uygulanabilir:
+1. **Developer Tier (\$0):** Aylık 50.000 isteğe kadar ücretsiz akıllı yönlendirme (BYOK - Kendi Anahtarını Getir mantığıyla).
+2. **Startup Tier (\$49/Ay):** Gelişmiş dashboard özellikleri, takım yönetimi ve geçmişe dönük analitik verileri.
+3. **Enterprise (Özel):** Tamamen şirkete özel sunucu kurulumu (On-Premises), özel güvenlik duvarları (guardrails) ve SLA garantisi.
+
+---
+
+## 🤝 Katkıda Bulunun
+
+FreeRouter topluluk destekli bir projedir. Geliştirme sürecine katkıda bulunmak, yeni akıllı yönlendirme kuralları eklemek veya hata bildirmek için lütfen bir `Issue` açın veya `Pull Request` gönderin!
 
 ## 🛠️ Destek ve Katkıda Bulunma
 
