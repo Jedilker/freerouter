@@ -8,7 +8,7 @@ Yönlendiricimiz gelen istemleri (prompt) milisaniyeler içinde analiz ederek en
 
 ## 🔑 Başlamadan Önce: API Anahtarınızı Alın
 
-1. `https://<YOUR_RENDER_URL>/docs` adresine gidin.
+1. `https://freerouter-zut6.onrender.com/docs` adresine gidin.
 2. `/auth/register` ve `/auth/login-and-generate-key` servislerini kullanarak hesabınızı oluşturun ve `sk_live_...` ile başlayan API anahtarınızı kopyalayın.
 
 ---
