@@ -17,7 +17,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 HF_API_URL = "https://huggingface.co"
 
-# 2. Model ve Eğitim Ayarları (Aynı kalıyor)
+# 2. Model ve Eğitim Ayarları
 def get_embedding(text: str):
     response = requests.post(HF_API_URL, json={"inputs": text})
     return response.json() if response.status_code == 200 else [0.0] * 384
@@ -27,10 +27,11 @@ train_prompts = [
     "Python ile mikroservis mimarisi tasarla.", "Kuantum fiziği nedir?", "Risk analizi raporu yap."
 ]
 train_labels = [0, 0, 0, 1, 1, 1]
+
 X_train = [get_embedding(p) for p in train_prompts]
 router_classifier = LogisticRegression().fit(X_train, np.array(train_labels))
 
-# 3. Pantic Veri Modelleri
+# 3. Pydantic Veri Modelleri
 class UserAuth(BaseModel):
     email: EmailStr
     password: str
@@ -38,21 +39,19 @@ class UserAuth(BaseModel):
 class RouterRequest(BaseModel):
     prompt: str
 
-# 4. API ANAHTARI KONTROL MEKANİZMASI (Güvenlik Katmanı)
+# 4. API Anahtarı Kontrol Mekanizması
 async def verify_api_key(x_api_key: str = Header(..., description="Sistemden ürettiğiniz API anahtarı")):
-    # Veritabanında bu anahtar var mı ve aktif mi kontrol et
     result = supabase.table("user_api_keys").select("*").eq("api_key", x_api_key).eq("is_active", True).execute()
     if not result.data:
-        raise HTTPException(status_code=401, detail="Geçersiz veya pasif API anahtarı. Lütfen giriş yapıp yeni bir anahtar üretin.")
-    return result.data[0] # Giriş yapan kullanıcının bilgilerini döndürür
+        raise HTTPException(status_code=401, detail="Geçersiz veya pasif API anahtarı.")
+    return result.data
 
-# 5. AUTH ENDPOINTS (Kayıt ve Giriş)
+# 5. Auth Uç Noktaları
 @app.post("/auth/register", tags=["Kullanıcı Yönetimi"])
 async def register(user: UserAuth):
     try:
-        # Supabase Auth üzerinde kullanıcı yaratır
         res = supabase.auth.sign_up({"email": user.email, "password": user.password})
-        return {"message": "Kullanıcı başarıyla oluşturuldu. Lütfen e-postanızı onaylayın (eğer aktifse).", "user_id": res.user.id}
+        return {"message": "Kullanıcı başarıyla oluşturuldu.", "user_id": res.user.id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -64,23 +63,25 @@ async def login_and_generate_key(user: UserAuth):
         supabase.table("user_api_keys").insert({"user_id": res.user.id, "api_key": new_key}).execute()
         return {"status": "Giriş Başarılı", "your_api_key": new_key}
     except Exception as e:
-        # DEĞİŞİKLİK BURADA: Artık yuvarlanmış mesaj yerine gerçek hatayı ekrana basıyoruz
         raise HTTPException(status_code=400, detail=f"Supabase Hatası: {str(e)}")
 
-# 6. KORUNAN ROUTE SERVİSİ
+# 6. Korunan Router Servisi (0-Dimensional Matris Hatası Tamamen Giderildi)
 @app.post("/route", tags=["Yönlendirici Motoru"])
 async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_api_key)):
     start_time = time.time()
     try:
         prompt_vector = get_embedding(request.prompt)
-        prediction = router_classifier.predict([prompt_vector])
-        probabilities = router_classifier.predict_proba([prompt_vector])
+        
+        # Vektör tek satırlık matris formatına zorlanıyor
+        X_test = np.array(prompt_vector).reshape(1, -1)
+        
+        prediction = router_classifier.predict(X_test)[0]
+        probabilities = router_classifier.predict_proba(X_test)[0]
         confidence = float(probabilities[prediction] * 100)
         
         target = "Llama-3-8B" if prediction == 0 else "Claude-3.5-Sonnet"
         latency = round((time.time() - start_time) * 1000, 2)
         
-        # Log kaydına isteği atan kullanıcının ID'sini de ekliyoruz (Kullanım takibi için)
         supabase.table("router_logs").insert({
             "prompt": request.prompt,
             "target_model": target,
@@ -88,6 +89,14 @@ async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_
             "latency_ms": latency
         }).execute()
         
-        return {"target_model": target, "confidence": round(confidence, 2), "latency_ms": latency}
+        return {
+            "target_model": target, 
+            "confidence": round(confidence, 2), 
+            "latency_ms": latency
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Router İç Hatası: {str(e)}")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
