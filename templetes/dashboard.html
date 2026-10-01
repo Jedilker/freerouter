@@ -1,1 +1,111 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Router - Müşteri Paneli</title>
+    <!-- Tailwind CSS (Görsel Tasarım İçin) -->
+    <script src="https://jsdelivr.net"></script>
+    <!-- Chart.js (Pasta Grafiği İçin) -->
+    <script src="https://jsdelivr.net"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans min-h-screen">
 
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="flex justify-between items-center mb-12 border-b border-slate-800 pb-6">
+            <div>
+                <h1 class="text-3xl font-bold tracking-tight text-white">🚀 LLM Router <span class="text-cyan-400">Dashboard</span></h1>
+                <p class="text-slate-400 text-sm mt-1">Yapay zekâ harcamalarınızı ve tasarrufunuzu canlı izleyin.</p>
+            </div>
+            <div class="flex items-center gap-4">
+                <input type="password" id="apiKeyInput" placeholder="sk_live_... API Anahtarınız" class="bg-slate-800 border border-slate-700 px-4 py-2 rounded-lg text-sm focus:outline-none focus:border-cyan-400 w-64 text-slate-200">
+                <button onclick="loadAnalytics()" class="bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-semibold px-5 py-2 rounded-lg text-sm transition-all shadow-md shadow-cyan-500/20 cursor-pointer">Verileri Yükle</button>
+            </div>
+        </header>
+
+        <!-- Ana Panel (Giriş Yapılınca Açılır) -->
+        <div id="dashboardContent" class="hidden animate-fade-in">
+            <!-- Sayaç Kartları -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-slate-800/50 border border-slate-800 p-6 rounded-2xl">
+                    <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Toplam İstek Sayısı</p>
+                    <h3 id="totalRequests" class="text-4xl font-bold text-white mt-2">0</h3>
+                </div>
+                <div class="bg-slate-800/50 border border-slate-800 p-6 rounded-2xl border-l-4 border-emerald-500">
+                    <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Toplam Finansal Tasarruf</p>
+                    <h3 id="totalSaved" class="text-4xl font-bold text-emerald-400 mt-2">$0.00 USD</h3>
+                </div>
+                <div class="bg-slate-800/50 border border-slate-800 p-6 rounded-2xl">
+                    <p class="text-slate-400 text-xs font-semibold uppercase tracking-wider">Ortalama Yanıt Süresi</p>
+                    <h3 id="avgLatency" class="text-4xl font-bold text-cyan-400 mt-2">0 ms</h3>
+                </div>
+            </div>
+
+            <!-- Grafik ve Bilgi Alanı -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-center bg-slate-800/30 border border-slate-800/80 p-8 rounded-2xl">
+                <div>
+                    <h4 class="text-xl font-bold text-white mb-4">Model Dağılım Grafiği</h4>
+                    <p class="text-slate-400 text-sm mb-6">Akıllı yönlendiricimizin isteklerinizi hangi LLM katmanlarına (Ucuz vs. Pahalı) böldüğünü gösteren canlı analiz verisi.</p>
+                </div>
+                <div class="w-full max-w-[280px] mx-auto">
+                    <canvas id="analyticsChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Başlangıç Uyarısı -->
+        <div id="welcomeMessage" class="text-center py-20 bg-slate-800/20 border border-slate-800 border-dashed rounded-2xl">
+            <p class="text-slate-400">Paneli görüntülemek için sağ üst köşeye <strong class="text-slate-200">API Anahtarınızı</strong> girip yükleme butonuna basın.</p>
+        </div>
+    </div>
+
+    <!-- JavaScript Mantığı -->
+    <script>
+        let myChart = null;
+
+        async function loadAnalytics() {
+            const apiKey = document.getElementById('apiKeyInput').value.strip ? document.getElementById('apiKeyInput').value.strip() : document.getElementById('apiKeyInput').value;
+            if (!apiKey) { alert('Lütfen geçerli bir API anahtarı girin!'); return; }
+
+            try {
+                // Kendi canlı API uç noktamıza istek atıyoruz
+                const response = await fetch('/analytics', {
+                    method: 'GET',
+                    headers: { 'x-api-key': apiKey }
+                });
+
+                if (!response.ok) { throw new Error('Anahtar geçersiz veya sunucu hatası!'); }
+                const data = await response.json();
+
+                // Arayüzü Güncelle
+                document.getElementById('welcomeMessage').classList.add('hidden');
+                document.getElementById('dashboardContent').classList.remove('hidden');
+                
+                document.getElementById('totalRequests').innerText = data.summary.total_requests;
+                document.getElementById('totalSaved').innerText = data.summary.financials.saved_currency_text;
+                document.getElementById('avgLatency').innerText = data.summary.average_latency_ms + " ms";
+
+                // Grafiği Çiz / Güncelle
+                if (myChart) { myChart.destroy(); }
+                const ctx = document.getElementById('analyticsChart').getContext('2d');
+                myChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: data.chart_data.labels,
+                        datasets: [{
+                            data: data.chart_data.datasets,
+                            backgroundColor: ['#10b981', '#3b82f6'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: { responsive: true, plugins: { legend: { labels: { color: '#94a3b8' } } } }
+                });
+
+            } catch (error) {
+                alert(error.message);
+            }
+        }
+    </script>
+</body>
+</html>
