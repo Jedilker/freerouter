@@ -149,3 +149,18 @@ async def get_user_analytics(current_user: dict = Depends(verify_api_key)):
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analitik Raporu Alınamadı: {str(e)}")
+
+# 1. En üstteki import alanına bunları ekleyin:
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi import Request
+
+# 2. app = FastAPI() satırının hemen altına şablon klasörünü tanımlayın:
+templates = Jinja2Templates(directory="templates")
+
+# 3. Koddaki Uç Noktaların (Endpoints) arasına ana sayfa rotasını ekleyin:
+@app.get("/", response_class=HTMLResponse, tags=["Görsel Arayüz"])
+async def index_page(request: Request):
+    # Kullanıcı ana siteye girdiğinde templates/dashboard.html sayfasını açar
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
