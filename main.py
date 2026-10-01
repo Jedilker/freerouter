@@ -100,3 +100,52 @@ async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+# Bu kodu main.py dosyanızın en altına, "if __name__ == '__main__':" satırının HEMEN ÜSTÜNE yapıştırın.
+
+@app.get("/analytics", tags=["Müşteri Paneli & Analitik"])
+async def get_user_analytics(current_user: dict = Depends(verify_api_key)):
+    try:
+        # 1. Veritabanından bu kullanıcının (veya test ortamında tüm) loglarını çekiyoruz
+        # Gerçek üründe müşteriler sadece kendi isteklerini görecek
+        logs_result = supabase.table("router_logs").select("*").execute()
+        logs = logs_result.data
+        
+        if not logs:
+            return {
+                "total_requests": 0,
+                "cheap_model_count": 0,
+                "expensive_model_count": 0,
+                "total_saved_usd": 0.0,
+                "average_latency_ms": 0.0
+            }
+            
+        total_requests = len(logs)
+        cheap_model_count = sum(1 for log in logs if log["target_model"] == "Llama-3-8B")
+        expensive_model_count = sum(1 for log in logs if log["target_model"] == "Claude-3.5-Sonnet")
+        
+        # 2. Toplam Tasarrufu Hesaplama (Her ucuz model yönlendirmesi = $0.00245 tasarruf)
+        total_saved_usd = round(cheap_model_count * 0.00245, 5)
+        
+        # 3. Ortalama Gecikme Süresi Hesaplama
+        total_latency = sum(log["latency_ms"] for log in logs)
+        average_latency_ms = round(total_latency / total_requests, 2)
+        
+        # 4. Dashboard Grafiklerine Gönderilecek Yapılandırılmış Veri
+        return {
+            "summary": {
+                "total_requests": total_requests,
+                "average_latency_ms": average_latency_ms,
+                "financials": {
+                    "total_saved_usd": total_saved_usd,
+                    "saved_currency_text": f"${total_saved_usd} USD Tasarruf Edildi"
+                }
+            },
+            "chart_data": {
+                "labels": ["Llama-3-8B (Ucuz)", "Claude-3.5 (Pahalı)"],
+                "datasets": [cheap_model_count, expensive_model_count]
+            },
+            "status": "success"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analitik Raporu Alınamadı: {str(e)}")
