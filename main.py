@@ -1,160 +1,304 @@
+import hashlib
 import os
-import time
+import re
 import secrets
-import numpy as np
-import requests
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, EmailStr
-from sklearn.linear_model import LogisticRegression
-from supabase import create_client, Client
+import time
+from pathlib import Path
+from typing import Any
 
-# 1. FastAPI ve Şablon Motoru Kurulumu
-app = FastAPI(title="Auth Entegreli Güvenli LLM Router API")
-templates = Jinja2Templates(directory="templates")
+from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, EmailStr, Field
+from supabase import Client, create_client
 
-# 2. Bağlantı Ayarları
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://YOUR_SUPABASE.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-HF_API_URL = "https://huggingface.co"
+app = FastAPI(
+    title="FreeRouter API",
+    description="Deterministic model selection API. It does not call model providers.",
+    version="1.0.0",
+)
 
-# 3. Model ve Eğitim Ayarları
-def get_embedding(text: str):
-    response = requests.post(HF_API_URL, json={"inputs": text})
-    return response.json() if response.status_code == 200 else [0.0] * 384
+BASE_DIR = Path(__file__).resolve().parent
+DASHBOARD_PATH = BASE_DIR / "dashboard.html"
+ANALYTICS_SAMPLE_LIMIT = 1000
+_supabase: Client | None = None
 
-train_prompts = [
-    "Bu metni özetle.", "Naber?", "10 ile 25'i topla.",
-    "Python ile mikroservis mimarisi tasarla.", "Kuantum fiziği nedir?", "Risk analizi raporu yap."
-]
-train_labels = [0, 0, 0, 1, 1, 1]
+COMPLEXITY_TERMS = re.compile(
+    r"\b(architecture|architect|security|threat model|distributed|scalab\w*|"
+    r"concurren\w*|trade-?off\w*|compare|migration|optimi[sz]\w*|"
+    r"risk analysis|deep dive|in detail|kapsamlı|mimari|güvenlik|"
+    r"karşılaştır|optimiz\w*|ölçeklen\w*|dağıtık|detaylı analiz)\b",
+    re.IGNORECASE,
+)
+MULTI_STEP_TERMS = re.compile(
+    r"\b(then|after that|step by step|and also|as well as|"
+    r"ayrıca|ardından|adım adım|bunun yanında)\b",
+    re.IGNORECASE,
+)
 
-X_train = [get_embedding(p) for p in train_prompts]
-router_classifier = LogisticRegression().fit(X_train, np.array(train_labels))
 
-# 4. Pydantic Veri Modelleri
 class UserAuth(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, max_length=128)
+
 
 class RouterRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=20_000)
 
-# 5. API Anahtarı Kontrol Mekanizması
-async def verify_api_key(x_api_key: str = Header(..., description="Sistemden ürettiğiniz API anahtarı")):
-    result = supabase.table("user_api_keys").select("*").eq("api_key", x_api_key).eq("is_active", True).execute()
+
+def get_supabase() -> Client:
+    global _supabase
+    if _supabase is not None:
+        return _supabase
+
+    url = os.getenv("SUPABASE_URL")
+    service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    if not url or not service_role_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication and persistence are unavailable: configure Supabase.",
+        )
+
+    try:
+        _supabase = create_client(url, service_role_key)
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase configuration is invalid or unavailable.",
+        ) from None
+    return _supabase
+
+
+def get_auth_client() -> Client:
+    url = os.getenv("SUPABASE_URL")
+    anon_key = os.getenv("SUPABASE_ANON_KEY")
+    if not url or not anon_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is unavailable: configure Supabase Auth.",
+        )
+    try:
+        return create_client(url, anon_key)
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Supabase Auth configuration is invalid or unavailable.",
+        ) from None
+
+
+def get_model_names() -> tuple[str, str]:
+    budget_model = os.getenv("ROUTER_BUDGET_MODEL", "").strip()
+    quality_model = os.getenv("ROUTER_QUALITY_MODEL", "").strip()
+    if not budget_model or not quality_model or budget_model == quality_model:
+        raise HTTPException(
+            status_code=503,
+            detail="Configure distinct budget and quality model names.",
+        )
+    return budget_model, quality_model
+
+
+def choose_model(prompt: str) -> tuple[str, str]:
+    """Choose a configured model with transparent, deterministic prompt heuristics."""
+    words = re.findall(r"\w+", prompt, flags=re.UNICODE)
+    score = 0
+    if len(words) >= 180:
+        score += 2
+    elif len(words) >= 70:
+        score += 1
+
+    score += min(2, len(COMPLEXITY_TERMS.findall(prompt)))
+    if MULTI_STEP_TERMS.search(prompt):
+        score += 1
+    if "```" in prompt or re.search(r"(?m)^\s*(def |class |function |SELECT )", prompt):
+        score += 2
+
+    budget_model, quality_model = get_model_names()
+    if score >= 2:
+        return quality_model, "complexity_rules"
+    return budget_model, "simple_request"
+
+
+def require_api_key(
+    x_api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> dict[str, Any]:
+    if not x_api_key or not x_api_key.startswith("sk_live_"):
+        raise HTTPException(status_code=401, detail="A valid API key is required.")
+
+    key_hash = hashlib.sha256(x_api_key.encode("utf-8")).hexdigest()
+    try:
+        result = (
+            get_supabase()
+            .table("user_api_keys")
+            .select("user_id")
+            .eq("key_hash", key_hash)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=503, detail="API key validation is temporarily unavailable."
+        ) from None
     if not result.data:
-        raise HTTPException(status_code=401, detail="Geçersiz veya pasif API anahtarı.")
-    return result.data
+        raise HTTPException(status_code=401, detail="Invalid or inactive API key.")
+    return {"user_id": result.data[0]["user_id"]}
 
-# 6. GÖRSEL ARAYÜZ (Ana Sayfa) - Klasör arama zorunluluğunu kaldıran kararlı sürüm
-@app.get("/", response_class=HTMLResponse, tags=["Görsel Arayüz"])
-async def index_page(request: Request):
-    try:
-        # Kodun yanındaki dashboard.html dosyasını doğrudan düz metin olarak okur
-        with open("dashboard.html", "r", encoding="utf-8") as f:
-            html_content = f.read()
-        return HTMLResponse(content=html_content)
-    except FileNotFoundError:
-        # Eğer dosya templates klasörünün içindeyse oradan okumayı dener (Yedek Plan)
-        try:
-            with open("templates/dashboard.html", "r", encoding="utf-8") as f:
-                html_content = f.read()
-            return HTMLResponse(content=html_content)
-        except Exception:
-            raise HTTPException(status_code=404, detail="dashboard.html dosyası sunucuda hiçbir yerde bulunamadı!")
 
-# 7. Auth Uç Noktaları
-@app.post("/auth/register", tags=["Kullanıcı Yönetimi"])
-async def register(user: UserAuth):
-    try:
-        res = supabase.auth.sign_up({"email": user.email, "password": user.password})
-        return {"message": "Kullanıcı başarıyla oluşturuldu.", "user_id": res.user.id}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    return FileResponse(DASHBOARD_PATH, media_type="text/html")
 
-@app.post("/auth/login-and-generate-key", tags=["Kullanıcı Yönetimi"])
-async def login_and_generate_key(user: UserAuth):
-    try:
-        res = supabase.auth.sign_in_with_password({"email": user.email, "password": user.password})
-        new_key = f"sk_live_{secrets.token_hex(24)}"
-        supabase.table("user_api_keys").insert({"user_id": res.user.id, "api_key": new_key}).execute()
-        return {"status": "Giriş Başarılı", "your_api_key": new_key}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Supabase Hatası: {str(e)}")
 
-# 8. Korunan Router Servisi
-@app.post("/route", tags=["Yönlendirici Motoru"])
-async def route_llm(request: RouterRequest, current_user: dict = Depends(verify_api_key)):
-    start_time = time.time()
-    try:
-        prompt_vector = get_embedding(request.prompt)
-        X_test = np.array(prompt_vector).reshape(1, -1)
-        
-        prediction = router_classifier.predict(X_test)
-        probabilities = router_classifier.predict_proba(X_test)
-        confidence = float(probabilities[prediction] * 100)
-        
-        target = "Llama-3-8B" if prediction == 0 else "Claude-3.5-Sonnet"
-        latency = round((time.time() - start_time) * 1000, 2)
-        
-        supabase.table("router_logs").insert({
-            "prompt": request.prompt,
-            "target_model": target,
-            "confidence": round(confidence, 2),
-            "latency_ms": latency
-        }).execute()
-        
-        return {"target_model": target, "confidence": round(confidence, 2), "latency_ms": latency}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Router İç Hatası: {str(e)}")
+@app.get("/health", tags=["Operations"])
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
-# 9. Analitik ve Raporlama Servisi
-@app.get("/analytics", tags=["Müşteri Paneli & Analitik"])
-async def get_user_analytics(current_user: dict = Depends(verify_api_key)):
+
+@app.post("/auth/register", tags=["Authentication"])
+def register(user: UserAuth) -> dict[str, str]:
     try:
-        logs_result = supabase.table("router_logs").select("*").execute()
-        logs = logs_result.data
-        
-        if not logs:
-            return {
-                "summary": {
-                    "total_requests": 0, "average_latency_ms": 0.0,
-                    "financials": {"total_saved_usd": 0.0, "saved_currency_text": "$0.00 USD Tasarruf Edildi"}
-                },
-                "chart_data": {"labels": ["Llama-3-8B (Ucuz)", "Claude-3.5 (Pahalı)"], "datasets": [0, 0]},
-                "status": "success"
+        result = get_auth_client().auth.sign_up(
+            {"email": str(user.email), "password": user.password}
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Registration failed. Check the email and password or try signing in.",
+        ) from None
+
+    if not result.user:
+        raise HTTPException(
+            status_code=400,
+            detail="Registration could not be completed. Check your email settings.",
+        )
+    return {"message": "Registration successful. Verify your email if required."}
+
+
+@app.post("/auth/login-and-generate-key", tags=["Authentication"])
+def login_and_generate_key(user: UserAuth) -> dict[str, str]:
+    try:
+        result = get_auth_client().auth.sign_in_with_password(
+            {"email": str(user.email), "password": user.password}
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid email or password.") from None
+
+    if not result.user:
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    api_key = f"sk_live_{secrets.token_urlsafe(32)}"
+    key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    try:
+        get_supabase().table("user_api_keys").insert(
+            {
+                "user_id": str(result.user.id),
+                "key_hash": key_hash,
+                "key_prefix": api_key[:16],
+                "is_active": True,
             }
-            
-        total_requests = len(logs)
-        cheap_model_count = sum(1 for log in logs if log["target_model"] == "Llama-3-8B")
-        expensive_model_count = sum(1 for log in logs if log["target_model"] == "Claude-3.5-Sonnet")
-        
-        total_saved_usd = round(cheap_model_count * 0.00245, 5)
-        total_latency = sum(log["latency_ms"] for log in logs)
-        average_latency_ms = round(total_latency / total_requests, 2)
-        
-        return {
-            "summary": {
-                "total_requests": total_requests,
-                "average_latency_ms": average_latency_ms,
-                "financials": {
-                    "total_saved_usd": total_saved_usd,
-                    "saved_currency_text": f"${total_saved_usd} USD Tasarruf Edildi"
-                }
-            },
-            "chart_data": {
-                "labels": ["Llama-3-8B (Ucuz)", "Claude-3.5 (Pahalı)"],
-                "datasets": [cheap_model_count, expensive_model_count]
-            },
-            "status": "success"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analitik Raporu Alınamadı: {str(e)}")
+        ).execute()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="The API key could not be saved. Please try again.",
+        ) from None
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    return {
+        "status": "success",
+        "api_key": api_key,
+        "message": "Store this key securely; it will not be shown again.",
+    }
+
+
+@app.post("/route", tags=["Router"])
+def route_llm(
+    request: RouterRequest,
+    current_user: dict[str, Any] = Depends(require_api_key),
+) -> dict[str, Any]:
+    prompt = request.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=422, detail="Prompt must not be blank.")
+
+    started_at = time.perf_counter()
+    target_model, routing_reason = choose_model(prompt)
+    latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+
+    try:
+        get_supabase().table("router_logs").insert(
+            {
+                "user_id": current_user["user_id"],
+                "target_model": target_model,
+                "routing_reason": routing_reason,
+                "latency_ms": latency_ms,
+            }
+        ).execute()
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="The routing decision could not be recorded. Please retry.",
+        ) from None
+
+    return {
+        "target_model": target_model,
+        "routing_reason": routing_reason,
+        "latency_ms": latency_ms,
+        "note": "Selection only; send the prompt to your model provider separately.",
+    }
+
+
+@app.get("/analytics", tags=["Analytics"])
+def get_user_analytics(
+    current_user: dict[str, Any] = Depends(require_api_key),
+) -> dict[str, Any]:
+    client = get_supabase()
+    user_id = current_user["user_id"]
+    budget_model, quality_model = get_model_names()
+    try:
+        total_result = (
+            client.table("router_logs")
+            .select("id", count="exact", head=True)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        logs_result = (
+            client.table("router_logs")
+            .select("target_model,latency_ms")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(ANALYTICS_SAMPLE_LIMIT)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=503, detail="Analytics are temporarily unavailable."
+        ) from None
+
+    logs = logs_result.data or []
+    total_requests = total_result.count or 0
+    model_counts: dict[str, int] = {}
+    for log in logs:
+        model = log["target_model"]
+        model_counts[model] = model_counts.get(model, 0) + 1
+
+    average_latency = (
+        round(sum(float(log["latency_ms"]) for log in logs) / len(logs), 2)
+        if logs
+        else 0.0
+    )
+    labels = [budget_model, quality_model]
+    counts = [model_counts.get(model, 0) for model in labels]
+    return {
+        "summary": {
+            "total_requests": total_requests,
+            "average_latency_ms": average_latency,
+        },
+        "chart_data": {"labels": labels, "datasets": counts},
+        "sampled_requests": len(logs),
+        "sample_limit": ANALYTICS_SAMPLE_LIMIT,
+    }

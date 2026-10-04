@@ -1,9 +1,5 @@
 fastapi
 uvicorn
-scikit-learn
 pydantic
-numpy
 supabase
-requests
 email-validator
-jinja2
