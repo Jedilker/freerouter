@@ -1,182 +1,74 @@
-# 🚀 LLM Router API Entegrasyon Dokümanı (SDK Örnekleri)
+# FreeRouter
 
-Bu doküman, sistemimizden aldığınız ticari `API Key` ile akıllı yönlendirici (router) motorumuzu kendi projelerinize (Python veya JavaScript/Node.js) nasıl entegre edeceğinizi gösterir.
+FreeRouter is a small, self-hosted API that selects a configured model name using transparent prompt-complexity rules. It returns a routing decision; it does **not** call OpenAI, Anthropic, or other model providers, forward prompts, provide provider fallback, or calculate cost savings. Your application sends the prompt to the selected provider.
 
-Yönlendiricimiz gelen istemleri (prompt) milisaniyeler içinde analiz ederek en doğru ve maliyet odaklı modele otomatik olarak yönlendirir.
+The canonical application is the FastAPI service in `main.py`. The legacy Node/haiku and static starter files in the repository are not part of this API.
 
----
+## What it provides
 
-## 🔑 Başlamadan Önce: API Anahtarınızı Alın
+- Deterministic budget/quality model selection, configurable with `ROUTER_BUDGET_MODEL` and `ROUTER_QUALITY_MODEL`.
+- Supabase Auth registration and login, with randomly generated API keys.
+- SHA-256 hashes of API keys at rest; the plaintext key is returned only once at creation.
+- Per-user API-key validation and analytics. Prompt text is never written to the database.
+- A small dashboard with no third-party JavaScript or CSS dependencies.
+- A bounded analytics sample (the most recent 1,000 requests) for model distribution and average routing-decision latency.
 
-1. `https://freerouter-zut6.onrender.com/docs` adresine gidin.
-2. `/auth/register` ve `/auth/login-and-generate-key` servislerini kullanarak hesabınızı oluşturun ve `sk_live_...` ile başlayan API anahtarınızı kopyalayın.
+The routing rules are a starter heuristic, not a trained classifier or a quality guarantee. Test them against your own workload before relying on their decisions.
 
----
+## Run locally
 
-## 🐍 1. Python ile Entegrasyon Örneği
+Use Python 3.10 or newer:
 
-Python projelerinizde akıllı yönlendirici API'mizi kullanmak için en popüler HTTP kütüphanesi olan `requests` paketini kullanabilirsiniz.
-
-### Bağımlılığı Kurun:
 ```bash
-pip install requests
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+# source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Kod Şablonu (`router_client.py`):
-```python
-import requests
+Create a Supabase project and apply [`schema.sql`](schema.sql) in its SQL editor. It migrates legacy plaintext API keys to hashes and removes the old plaintext key and prompt columns. Back up the database first if those legacy values must be retained. Configure the project URL, public Auth key, and server-side service-role key (never expose the service-role key in a browser or commit it):
 
-# 1. API Ayarlarını Tanımlayın
-API_URL = "https://YOUR_ROUTER_://onrender.com"
-API_KEY = "sk_live_SİZİN_API_ANAHTARINIZ" # Buraya kendi anahtarınızı yazın
-
-# 2. Test Etmek İstediğiniz Yapay Zekâ İstemini Hazırlayın
-payload = {
-    "prompt": "AWS üzerinde Kubernetes kümesi kurarken güvenlik duvarı kurallarını nasıl yapılandırmalıyım?"
-}
-
-# 3. Güvenlik Anahtarını Header Olarak Ekleyin
-headers = {
-    "x-api-key": API_KEY,
-    "Content-Type": "application/json"
-}
-
-try:
-    # 4. İsteği Gönderin
-    print("Yönlendirme kararı alınıyor...")
-    response = requests.post(API_URL, json=payload, headers=headers)
-    
-    if response.status_code == 200:
-        result = response.json()
-        print("\n✅ Karar Başarılı!")
-        print(f"🎯 Hedef Model: {result['target_model']}")
-        print(f"📊 Güven Skoru: %{result['confidence']}")
-        print(f"⚡ Gecikme (Latency): {result['latency_ms']} ms")
-        
-        # PROJENİZDEKİ AKSİYON:
-        # Burada dönen 'target_model' değerine göre isteğinizi 
-        # OpenAI API'sine mi yoksa Anthropic API'sine mi atacağınıza karar verebilirsiniz.
-        
-    else:
-        print(f"❌ Hata Oluştu! Durum Kodu: {response.status_code}")
-        print(response.json())
-
-except Exception as e:
-    print(f"Sunucuya bağlanırken bir hata yaşandı: {e}")
+```text
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_SIDE_SERVICE_ROLE_KEY
+ROUTER_BUDGET_MODEL=your-provider/your-low-cost-model
+ROUTER_QUALITY_MODEL=your-provider/your-capable-model
 ```
 
----
+For example, set these as environment variables in your shell or deployment platform. Start the API:
 
-## 🟨 2. JavaScript / Node.js ile Entegrasyon Örneği
-
-Modern JavaScript projelerinizde (Node.js, React, Next.js vb.) tarayıcı tabanlı yerel `fetch` fonksiyonunu kullanarak entegrasyonu saniyeler içinde tamamlayabilirsiniz.
-
-### Kod Şablonu (`router_client.js`):
-```javascript
-// 1. API Ayarlarını Tanımlayın
-const API_URL = "https://YOUR_ROUTER_://onrender.com";
-const API_KEY = "sk_live_SİZİN_API_ANAHTARINIZ"; // Buraya kendi anahtarınızı yazın
-
-// 2. İstek Verisini Hazırlayın
-const requestData = {
-    prompt: "Bana Javascript ile hızlı bir sıralama (sort) fonksiyonu yazar mısın?"
-};
-
-async function getLLMRoute() {
-    try {
-        console.log("Yönlendirme kararı alınıyor...");
-        
-        // 3. İsteği Gönderin
-        const response = await fetch(API_URL, {
-            method: "POST",
-            headers: {
-                "x-api-key": API_KEY,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify(requestData)
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            console.log("\n✅ Karar Başarılı!");
-            console.log(`🎯 Hedef Model: ${result.target_model}`);
-            console.log(`📊 Güven Skoru: %${result.confidence}`);
-            console.log(`⚡ Gecikme (Latency): ${result.latency_ms} ms`);
-        } else {
-            console.error(`❌ Hata Oluştu: ${result.detail || 'Bilinmeyen Hata'}`);
-        }
-
-    } catch (error) {
-        console.error("Sunucu ile iletişim kurulurken bir hata yaşandı:", error);
-    }
-}
-
-// Fonksiyonu çalıştırın
-getLLMRoute();
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
----
-# ⚡ FreeRouter: The Ultra-Fast, Open-Source & Privacy-First LLM Router
+Visit `http://localhost:8000/` for the dashboard and `/docs` for the OpenAPI docs. `/health` is a liveness endpoint; it does not verify Supabase connectivity.
 
-[![License: MIT](https://shields.io)](https://opensource.org)
-[![FastAPI](https://shields.io)](https://tiangolo.com)
-[![Render](https://shields.io)](https://render.com)
-[![Supabase](https://shields.io)](https://supabase.com)
+## API flow
 
-**FreeRouter**, yapay zekâ uygulamalarınızdaki API maliyetlerini %50'ye varan oranda düşüren, bağımlılık riskini (vendor lock-in) ortadan kaldıran ve kararları ışık hızında veren açık kaynaklı bir **LLM Router (Yönlendirici)** projesidir. 
+1. `POST /auth/register` with `{"email":"you@example.com","password":"at-least-8-characters"}`.
+2. `POST /auth/login-and-generate-key` with the same credentials. Keep the returned `api_key` secret; it cannot be retrieved later. Generate another key after losing one, then deactivate the lost key by setting its `is_active` field to `false` in Supabase.
+3. Call `POST /route` with `x-api-key: sk_live_...` and a JSON body such as:
 
-Ağır ve maliyetli LLM katmanları kullanan rakiplerin aksine, FreeRouter yerel gömülü matematiksel motoru sayesinde yönlendirme kararlarını **sadece 15-30ms** içinde, tamamen ücretsiz ve güvenli bir şekilde verir.
+```json
+{"prompt":"Explain what an HTTP status code is."}
+```
 
----
+The response contains `target_model`, `routing_reason`, and `latency_ms`. The latency measures only the local routing decision, not an inference call or database write. Use `target_model` to select your provider/model and submit the original prompt yourself.
+4. Call `GET /analytics` with the same API-key header to retrieve per-user totals and statistics for the latest sample.
 
-## 🎯 Neden FreeRouter? (Temel Değer Önerileri)
+## Deployment
 
-* **💰 %50+ Maliyet Tasarrufu:** Basit istekleri otomatik olarak ultra ucuz açık kaynaklı modellere (Llama-3-8B vb.), karmaşık analizleri ise gelişmiş modellere (Claude 3.5 Sonnet vb.) yönlendirir.
-* **⚡ Işık Hızında Karar (Low Latency):** Arkada karar vermek için ikinci bir LLM çalıştırmaz. Embedding tabanlı akıllı sınıflandırıcısı sayesinde kararlar milisaniyeler içinde alınır.
-* **🔄 %100 Kesintisiz Hizmet (Fallback / Uptime):** Bir sağlayıcının API'si (Örn: OpenAI) çöktüğünde veya yavaşladığında, trafiği anında alternatif modellere aktarır.
-* **🛡️ Gizlilik ve Güvenlik (Privacy-First):** Kurumsal verilerinizi dışarı aktarmaz. İsterseniz Docker altyapısı sayesinde tamamen kendi sunucularınızda (On-Premises) çalıştırabilirsiniz.
-* **📊 Canlı Finansal Dashboard:** Müşteri paneli üzerinden toplam istek sayınızı, model dağılım grafiklerinizi ve cebinizde kalan net dolar tasarrufunuzu canlı olarak izleyin.
+The Docker image runs the FastAPI service and uses the platform's `PORT` environment variable (default `8000`). Configure the Supabase settings as deployment secrets. Do not use the Node sample's `process.json` as the API deployment command.
 
----
+## Development checks
 
-## 🛠️ Mimari ve Teknolojik Altyapı
+```bash
+python -m unittest discover -s tests
+```
 
-FreeRouter, modern yazılım standartları ve bulut teknolojileriyle sıfır maliyetle ölçeklenebilecek şekilde tasarlanmıştır:
-* **Backend:** [FastAPI](https://tiangolo.com) (Asenkron ve Yüksek Performanslı Web API)
-* **Karar Motoru:** Yerel [Scikit-Learn](https://scikit-learn.org) ve Bulut Tabanlı Embedding Entegrasyonu (Jev felsefesiyle üretilmiş hafif alternatif)
-* **Veritabanı & Kimlik Doğrulama:** [Supabase](https://supabase.com) (PostgreSQL + Canlı Loglama + Güvenli API Key Auth)
-* **Konteynerizasyon:** [Docker](https://docker.com) (Her bulut platformuna tek tıkla kurulum uyumlu)
+## License
 
----
-
-## 💻 Canlı Panel Görüntüsü (Dashboard)
-
-Uygulamanın ana dizinine girdiğinizde sizi karşılayan modern arayüz üzerinden:
-1. Kayıt olabilir ve kendinize özel güvenli ticari `API Key` üretebilirsiniz.
-2. Ürettiğiniz anahtarı girerek yapay zekâ harcamalarınızı ve model dağılım pasta grafiklerinizi anlık olarak takip edebilirsiniz.
-
----
-
-## 🚀 Hızlı Başlangıç ve Entegrasyon
-
-FreeRouter'ı kendi projenize entegre etmek sadece 3 satır kod sürer.
-
----
-
-## 💰 SaaS İş Modeli ve Lisans
-
-FreeRouter, **MIT Lisansı** ile tamamen açık kaynaklıdır. Projeyi ticari bir SaaS ürünü olarak konumlandırırken şu modeller uygulanabilir:
-1. **Developer Tier (\$0):** Aylık 50.000 isteğe kadar ücretsiz akıllı yönlendirme (BYOK - Kendi Anahtarını Getir mantığıyla).
-2. **Startup Tier (\$49/Ay):** Gelişmiş dashboard özellikleri, takım yönetimi ve geçmişe dönük analitik verileri.
-3. **Enterprise (Özel):** Tamamen şirkete özel sunucu kurulumu (On-Premises), özel güvenlik duvarları (guardrails) ve SLA garantisi.
-
----
-
-## 🤝 Katkıda Bulunun
-
-FreeRouter topluluk destekli bir projedir. Geliştirme sürecine katkıda bulunmak, yeni akıllı yönlendirme kuralları eklemek veya hata bildirmek için lütfen bir `Issue` açın veya `Pull Request` gönderin!
-
-## 🛠️ Destek ve Katkıda Bulunma
-
-Eğer router motorumuzla ilgili bir sorun yaşarsanız veya kurumsal (On-Premises) kurulum talepleriniz olursa lütfen GitHub üzerinden bir `Issue` açın veya bizimle iletişime geçin.
+MIT. See [`LICENSE`](LICENSE).
